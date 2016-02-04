@@ -1,0 +1,834 @@
+diff -Naur origsrc/extra/Makefile src/extra/Makefile
+--- origsrc/extra/Makefile	1970-01-01 00:00:00.000000000 +0000
++++ src/extra/Makefile	2009-08-26 21:56:31.000000000 +0000
+@@ -0,0 +1,52 @@
++# Practical Operating Systems 2008/2009
++# Assignment 2 -- Makefile
++#
++# Richard van Heuven van Staereling  <richard@few.vu.nl>
++# Marc Hage                          <mrhage@few.vu.nl>
++#
++
++
++# flags, programs
++DEBUG	= 0
++BLOCK_SZ	= 1024
++OLDFS	= /dev/c0d2
++NEWFS	= /dev/c0d3
++OLDMNT	= /mnt/c0d2
++NEWMNT	= /mnt/c0d3
++
++ASS2_FILES	= defrag comparefs
++
++MAKE	= exec make
++CC	= cc
++CFLAGS	= -g -Wall -DDEBUG=$(DEBUG) -DBLOCKSIZE=$(BLOCK_SZ)
++LDFLAGS	=
++RM	= rm -f
++
++
++# targets
++all: $(ASS2_FILES)
++
++defrag: defrag.o
++	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
++
++defrag.o: defrag.c defrag.h
++	$(CC) $(CFLAGS) -o $@ -c $<
++
++comparefs: comparefs.c
++	$(CC) -o $@ $<
++
++%.o:
++	$(CC) -o $@ -c $<
++
++test: comparefs
++	mkfs -B $(BLOCK_SZ) $(NEWFS)
++	./defrag $(OLDFS) $(NEWFS)
++	fsck $(NEWFS)
++	mount $(OLDFS) $(OLDMNT)
++	mount $(NEWFS) $(NEWMNT)
++	./comparefs $(OLDMNT) $(NEWMNT)
++	umount $(OLDFS)
++	umount $(NEWFS)
++
++clean:
++	$(RM) $(ASS2_FILES) core *~ *.o
+diff -Naur origsrc/extra/comparefs.c src/extra/comparefs.c
+--- origsrc/extra/comparefs.c	1970-01-01 00:00:00.000000000 +0000
++++ src/extra/comparefs.c	2009-08-26 21:56:24.000000000 +0000
+@@ -0,0 +1,141 @@
++/* Practical Operating Systems 2008/2009
++ * Assignment 2 -- comparefs.c
++ *
++ * The name is actually incorrect because it compares two directories, not file
++ * systems.  So you need to mount the filesystems yourself first.  What this
++ * program does is recursively comparing the contents of the first directory
++ * with the second, doing a file-by-file and a byte-by-byte comparison.  Only
++ * files and directories are compared.  You can use this to test whether the
++ * defrag program copies files correctly.
++ *
++ * The only "bug" in this test program is that it doesn't account for extra
++ * files in the second directory.  An extra check could be added in comparedir()
++ * but we felt this was too much trouble and not necessary to test defrag.  What
++ * this program also does is not check if character, block devices etc. are
++ * copied correctly but because this is also unlikely to fail in defrag we
++ * skipped it here (of course, it checks if the files exist but it does not
++ * check the contents).
++ *
++ * Due to laziness, many constants are hardcoded and some lines exceed 80 chars.
++ * Hope this is OK for this test program.
++ *
++ * Returns 1 upon failure, 0 on success.
++ *
++ * Richard van Heuven van Staereling  <richard@few.vu.nl>
++ * Marc Hage                          <mrhage@few.vu.nl>
++ *
++ */
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <sys/types.h>
++#include <dirent.h>
++#include <sys/stat.h>
++#include <fcntl.h>
++#include <stdarg.h>
++#include <errno.h>
++#include <string.h>
++
++
++void fatal(const char *description, ...)
++{
++	va_list args;
++	va_start(args, description);
++	vfprintf(stdout, description, args);
++	va_end(args);
++	fprintf(stdout, "\n");
++	exit(1);
++}
++
++
++void comparefile(char *path1, char *path2)
++{
++	FILE *f1, *f2;
++	static char buf1[1024], buf2[1024];
++	size_t readbytes;
++	
++	/* Open both files. */
++	f1 = fopen(path1, "r");
++	f2 = fopen(path2, "r");
++	if (f1 == NULL || f2 == NULL)
++		fatal("cannot open file: %s: %s", (f1 == NULL) ? path1 : path2,
++				strerror(errno));
++	
++	/* Read from both files and compare. */
++	while (readbytes = fread((void *) buf1, sizeof(char), 1024, f1)) {
++		if (fread((void *) buf2, sizeof(char), readbytes, f2) != readbytes)
++			fatal("%s is smaller than %s", path2, path1);
++		
++		if (strncmp(buf1, buf2, readbytes) != 0)
++			fatal("%s and %s differ", path1, path2);
++	}
++	
++	/* We already checked for f2<f1, what about f2>f1? */
++	if (fread((void *) buf2, sizeof(char), 1, f2) != 0)
++		fatal("%s is bigger than %s", path2, path1);
++	
++	/* Clean up. */
++	fclose(f1);
++	fclose(f2);
++}
++
++
++void comparedir(char *path1, char *path2)
++{
++	DIR            *d;  /* current working directory */
++	struct dirent  *f;  /* current working file */
++	
++	/* Open directory and iterate files with readdir(). */
++	d = opendir(path1);
++	if (d == NULL)
++		fatal("cannot open dir: %s: %s", path1, strerror(errno));
++	
++	while (f = readdir(d)) {
++		struct stat s;
++		char next1[256], next2[256];
++		
++		/* Skip . and .. */
++		if (strcmp(f->d_name, ".") == 0) continue;
++		if (strcmp(f->d_name, "..") == 0) continue;
++		
++		/* Append next filename to current path, store in next1/2. */
++		strncpy(next1, path1, (size_t) 255);
++		strcat(next1, "/"); strcat(next1, f->d_name);
++		strncpy(next2, path2, (size_t) 255);
++		strcat(next2, "/"); strcat(next2, f->d_name);
++		
++		if (stat(next1, &s) != 0)
++			fatal("cannot stat file: %s: %s", next1, strerror(errno));
++		
++		switch (s.st_mode & S_IFMT) {
++		case S_IFREG:  /* Found a file, compare it. */
++			printf("regular: %s\n", next1);
++			comparefile(next1, next2);
++			break;
++		case S_IFDIR:  /* Found a directory, go recursive. */
++			printf("dir    : %s\n", next1);
++			comparedir(next1, next2);
++			break;
++		/* Ignore all other file types. */
++		case S_IFIFO: printf("pipe   : %s\n", next1); break;
++		case S_IFCHR: printf("char   : %s\n", next1); break;
++		case S_IFBLK: printf("block  : %s\n", next1); break;
++		case S_IFLNK: printf("symlink: %s\n", next1); break;
++		default: fatal("unknown file type: %s", next1);
++		}
++	}
++	
++	/* Clean up. */
++	closedir(d);
++}
++
++
++int main(int argc, char *argv[])
++{
++	if (argc != 3)
++		fatal("usage: %s dir1 dir2 (mount them yourself)", argv[0]);
++	
++	comparedir(argv[1], argv[2]);
++	
++	return 0;
++}
+diff -Naur origsrc/extra/defrag.c src/extra/defrag.c
+--- origsrc/extra/defrag.c	1970-01-01 00:00:00.000000000 +0000
++++ src/extra/defrag.c	2009-08-26 21:56:26.000000000 +0000
+@@ -0,0 +1,489 @@
++/* Practical Operating Systems 2008/2009
++ * Assignment 2 -- defrag.c
++ *
++ * Richard van Heuven van Staereling  <richard@few.vu.nl>
++ * Marc Hage                          <mrhage@few.vu.nl>
++ *
++ */
++
++#include "defrag.h"
++
++
++
++/*============================================================================*
++ *                                  fatal                                     *
++ *============================================================================*/
++PRIVATE void fatal(int errno, const char *description, ...)
++/* Exits the program with errno and prints a one-line description to stdout.
++ * Possible values for errno are defined in defrag.h and description is assumed
++ * to be one line, without the trailing '\n'. */
++{
++	va_list args;
++	
++	va_start(args, description);
++	vfprintf(stdout, description, args);
++	va_end(args);
++	fprintf(stdout, "\n");
++	
++	exit(errno);
++}
++
++
++
++
++/*============================================================================*
++ *                            read/write_bytes                                *
++ *============================================================================*/
++PRIVATE void read_bytes(int fd, off_t offset, int n_bytes, u8_t *block_buf)
++{
++	if (lseek(fd, offset, SEEK_SET) < 0)
++		fatal(E_GENERIC, "Error during lseek");
++	
++	if (read(fd, block_buf, n_bytes) < 0)
++		fatal(E_GENERIC, "Error during read: %s", strerror(errno));
++}
++
++
++PRIVATE void write_bytes(int fd, off_t offset, int n_bytes, u8_t *block_buf)
++{
++	if (lseek(fd, offset, SEEK_SET) < 0)
++		fatal(E_GENERIC, "Error during lseek");
++	
++	if (write(fd, (char *) block_buf, n_bytes) < 0)
++		fatal(E_GENERIC, "Error during write: %s", strerror(errno));
++}
++
++
++
++
++/*============================================================================*
++ *                            read/write_block                                *
++ *============================================================================*/
++PRIVATE void read_block(fs_t *fs, block_t block_nb, u8_t *block_buf)
++{
++	read_bytes(fs->fd, btoa(block_nb), BLOCK_SZ, block_buf);
++}
++
++
++PRIVATE void write_block(fs_t *fs, block_t block_nb, u8_t *block_buf)
++{
++	write_bytes(fs->fd, btoa(block_nb), BLOCK_SZ, block_buf);
++}
++
++
++
++
++/*============================================================================*
++ *                            read/write_bitmap                               *
++ *============================================================================*/
++PRIVATE void read_bitmap(fs_t *fs, block_t block_nb, block_t n_blocks,
++		bitchunk_t *bitmap_buf)
++{
++	read_bytes(fs->fd, BITMAPS_OFFSET + btoa(block_nb),
++			n_blocks * BLOCK_SZ, (u8_t *) bitmap_buf);
++}
++
++
++PRIVATE void write_bitmap(fs_t *fs, block_t block_nb, block_t n_blocks,
++		bitchunk_t *bitmap_buf)
++{
++	write_bytes(fs->fd, BITMAPS_OFFSET + btoa(block_nb),
++			n_blocks * BLOCK_SZ, (u8_t *) bitmap_buf);
++}
++
++
++
++
++/*============================================================================*
++ *                             read/write_inode                               *
++ *============================================================================*/
++PRIVATE void read_inode(fs_t *fs, ino_t inode_nb, d2_inode *inode_buf)
++{
++	read_bytes(fs->fd, itoa(inode_nb), sizeof(d2_inode),
++			(u8_t *) inode_buf);
++}
++
++
++PRIVATE void write_inode(fs_t *fs, ino_t inode_nb, d2_inode *inode_buf)
++{
++	write_bytes(fs->fd, itoa(inode_nb), sizeof(d2_inode),
++			(u8_t *) inode_buf);
++}
++
++
++
++
++/*============================================================================*
++ *                              read_superblock                               *
++ *============================================================================*/
++PRIVATE void read_superblock(fs_t *fs, superblock_t *superblock)
++/* There is no write counterpart because the superblock stays unchanged. */
++{
++	u8_t block_buf[SUPERBLOCK_SZ];
++	read_bytes(fs->fd, SUPERBLOCK_OFFSET, SUPERBLOCK_SZ, block_buf);
++	memcpy(superblock, block_buf, sizeof(superblock_t));
++}
++
++
++
++
++/*============================================================================*
++ *                                 check_*                                    *
++ *============================================================================*/
++PRIVATE void check_args(int argc, char *argv[])
++{
++	if (argc != 3)
++		fatal(E_INVARGS, "Wrong number of arguments");
++}
++
++
++PRIVATE void check_isblockdev(fs_t *fs)
++/* Check whether the opened file is a block device.  This is not strictly
++ * necessary as lseek() would fail otherwise; this is just here for a proper
++ * error code/message. */
++{
++	struct stat dev_stat;
++	
++	if (fstat(fs->fd, &dev_stat) < 0)
++		fatal(E_GENERIC, "fstat() failed");
++	
++	if (!S_ISBLK(dev_stat.st_mode))
++		fatal(E_NOTMINIX3, "Not a block device");
++}
++
++
++PRIVATE void check_superblock(fs_t *fs)
++{
++	if (fs->superblock.s_magic != SUPER_V3)
++		fatal(E_NOTMINIX3, "Not a MINIX V3 fs (wrong magic number)");
++}
++
++
++PRIVATE void check_isunmounted(fs_t *fs)
++/* This code is based from check_mtab() in mkfs.c but it is imperfect.  See
++ * documentation for details. */
++{
++	char special[PATH_MAX + 1];
++	char mounted_on[PATH_MAX + 1];
++	char version[10];
++	char rw_flag[10];
++	
++	if (load_mtab("defrag") < 0)
++		fatal(E_GENERIC, "Cannot open /etc/mtab");
++	
++	while (get_mtab_entry(special, mounted_on, version, rw_flag) >= 0) {
++		if (strcmp(fs->filename, special) == 0)
++			fatal(E_GENERIC, "fs is mounted, can't defrag");
++	}
++}
++
++
++PRIVATE void check_blocksize(fs_t *fs)
++{
++	if (BLOCK_SZ != BLOCKSIZE)
++		fatal(E_BLOCKSZ, "Block size of %s unsupported", fs->filename);
++}
++
++
++PRIVATE void check_isempty(fs_t *fs)
++/* Traverse the inode map.  The first block must be 3 (first two bits set, one
++ * for the non-existant inode and one for the root directory) and the rest must
++ * be zero. */
++{
++	int i;
++	
++	if (((u8_t *) fs->inode_map)[0] != 3)
++		fatal(E_NOTEMPTY, "Output file system not empty (inode 0/1)");
++	
++	for (i=1; i < (IMAP_BLOCKS * BLOCK_SZ / 8); i++) {
++		if (fs->inode_map[i] != 0)
++			fatal(E_NOTEMPTY, "Output file system not empty");
++	}
++}
++
++
++PRIVATE void check_size(fs_t *fs, ino_t min_inodes, zone_t min_zones)
++{
++	if (fs->superblock.s_ninodes < min_inodes)
++		fatal(E_TOOSMALL, "Not enough space in inode bitmap");
++	
++	if (fs->superblock.s_zones < min_zones)
++		fatal(E_TOOSMALL, "Not enough zones available");
++}
++
++
++
++
++/*============================================================================*
++ *                              open_fs,  close_fs                            *
++ *============================================================================*/
++PRIVATE void open_fs(const char *filename, int flags, fs_t *fs)
++{
++	int fd;
++	
++	/* Open fs and store file descriptor.  Close is done in close_fs(). */
++	fd = open(filename, flags);
++	if (fd < 0)
++		fatal(E_NOTFOUND, "Failed to open %s: %s", filename,
++				strerror(errno));
++	
++	/* File opened.  Check it and fill the fs control block (fscb). */
++	fs->filename = filename;
++	fs->fd = fd;
++	
++	/* Is the file a MINIX V3 file system?  Read superblock into fscb. */
++	check_isblockdev(fs);
++	read_superblock(fs, &fs->superblock);
++	
++	/* Additional checks. */
++	check_superblock(fs);
++	check_isunmounted(fs);
++	check_blocksize(fs);
++	
++	/* Read inode bitmap into fscb. */
++	fs->inode_map = (bitchunk_t *) calloc((size_t) IMAP_BLOCKS, BLOCK_SZ);
++	if (!fs->inode_map)
++		fatal(E_GENERIC, "Not enough memory to malloc in read_bitmap");
++	read_bitmap(fs, 0, IMAP_BLOCKS, fs->inode_map);
++	
++	/* Read zone bitmap into fscb. */
++	fs->zone_map = (bitchunk_t *) calloc((size_t) ZMAP_BLOCKS, BLOCK_SZ);
++	if (!fs->zone_map)
++		fatal(E_GENERIC, "Not enough memory to malloc in read_bitmap");
++	read_bitmap(fs, IMAP_BLOCKS, ZMAP_BLOCKS, fs->zone_map);
++}
++
++
++PRIVATE void open_input_fs(const char *filename, fs_t *fs)
++{
++	int i;
++	ino_t last_inode_nb = 0;
++	zone_t zones_used = 0;
++	
++	open_fs(filename, O_RDONLY, fs);
++	
++	/* Get the last used inode number. */
++	for (i=0; i < fs->superblock.s_ninodes; i++) {
++		if (bitset(fs->inode_map, (bit_t) i))
++			last_inode_nb = (ino_t) i;
++	}
++	fs->last_inode_nb = last_inode_nb;
++	
++	/* Count number of zones used. */
++	for (i=0; i < fs->superblock.s_zones; i++) {
++		if (bitset(fs->zone_map, (bit_t) i))
++			zones_used++;
++	}
++	fs->zones_used = zones_used;
++	
++	DPRINTF("oldfs: last inode nb: %d\n", last_inode_nb);
++	DPRINTF("oldfs: zones used: %d\n", zones_used);
++}
++
++
++PRIVATE void open_output_fs(const char *filename, fs_t *fs, ino_t last_inode_nb,
++		zone_t zones_used)
++{
++	open_fs(filename, O_RDWR, fs);
++	
++	/* Output-specific checks. */
++	check_isempty(fs);
++	check_size(fs, last_inode_nb, zones_used);
++}
++
++
++PRIVATE void close_fs(fs_t *fs)
++{
++	free(fs->inode_map);
++	free(fs->zone_map);
++	
++	if (close(fs->fd) < 0)
++		fatal(E_GENERIC, "Cannot close filesystem");
++}
++
++
++
++
++/*============================================================================*
++ *                               defrag_*                                     *
++ *============================================================================*/
++PRIVATE block_t defrag_data_block(fs_t *oldfs, fs_t *newfs,
++		block_t old_block_nb, block_t *next_free)
++{
++	u8_t block_buf[BLOCKSIZE];
++	block_t new_block_nb;
++	
++	if (old_block_nb == NO_ZONE)
++		return NO_ZONE;
++	
++	/* Read data block, increment pointer to next free zone. */
++	read_block(oldfs, old_block_nb, block_buf);
++	new_block_nb = (*next_free)++;
++	
++	/* Write data block, set bit in zone map. */
++	write_block(newfs, new_block_nb, block_buf);
++	setbit(newfs->zone_map, (bit_t) (new_block_nb -
++			newfs->superblock.s_firstdatazone + 1));
++	
++	DPRINTF("wrote data block to %d (%d)\n", new_block_nb, old_block_nb);
++	return new_block_nb;
++}
++
++
++PRIVATE block_t defrag_siblock(fs_t *oldfs, fs_t *newfs,
++		block_t old_siblock_nb, block_t *next_free)
++{
++	int i;
++	block_t old_siblock[V2_INDIRECTS(BLOCKSIZE)];
++	block_t new_siblock[V2_INDIRECTS(BLOCKSIZE)];
++	block_t new_siblock_nb;
++	
++	if (old_siblock_nb == NO_ZONE)
++		return NO_ZONE;
++	
++	/* Read single indirect block, save next_free before incrementing. */
++	read_block(oldfs, old_siblock_nb, (u8_t *) old_siblock);
++	new_siblock_nb = (*next_free)++;
++	
++	/* Handle all data blocks that this single indirect block points to. */
++	for (i=0; i < V2_INDIRECTS(BLOCKSIZE); i++) {
++		new_siblock[i] = defrag_data_block(oldfs, newfs,
++				old_siblock[i], next_free);
++	}
++	
++	/* Write single indirect block, set bit in zone map. */
++	write_block(newfs, new_siblock_nb, (u8_t *) new_siblock);
++	setbit(newfs->zone_map, (bit_t) (new_siblock_nb -
++			newfs->superblock.s_firstdatazone + 1));
++	
++	DPRINTF("wrote siblock to %d (%d)\n", new_siblock_nb, old_siblock_nb);
++	return new_siblock_nb;
++}
++
++
++PRIVATE block_t defrag_diblock(fs_t *oldfs, fs_t *newfs,
++		block_t old_diblock_nb, block_t *next_free)
++{
++	int i;
++	block_t old_diblock[V2_INDIRECTS(BLOCKSIZE)];
++	block_t new_diblock[V2_INDIRECTS(BLOCKSIZE)];
++	block_t new_diblock_nb;
++	
++	if (old_diblock_nb == NO_ZONE)
++		return NO_ZONE;
++	
++	/* Read double indirect block, save next_free before incrementing. */
++	read_block(oldfs, old_diblock_nb, (u8_t *) old_diblock);
++	new_diblock_nb = (*next_free)++;
++	
++	/* Handle all siblocks that this double indirect block points to. */
++	for (i=0; i < V2_INDIRECTS(BLOCKSIZE); i++) {
++		new_diblock[i] = defrag_siblock(oldfs, newfs,
++				old_diblock[i], next_free);
++	}
++	
++	/* Write double indirect block, set bit in zone map. */
++	write_block(newfs, new_diblock_nb, (u8_t *) new_diblock);
++	setbit(newfs->zone_map, (bit_t) (new_diblock_nb -
++			newfs->superblock.s_firstdatazone + 1));
++	
++	DPRINTF("wrote diblock to %d (%d)\n", new_diblock_nb, old_diblock_nb);
++	return new_diblock_nb;
++}
++
++
++PRIVATE void defrag_inode(fs_t *oldfs, fs_t *newfs, ino_t inode_nb,
++		block_t *next_free)
++{
++	d2_inode inode;
++	int i;  /* index to traverse block numbers in inode */
++	
++	if (!bitset(oldfs->inode_map, (bit_t) inode_nb))
++		return;
++	
++	/* Read inode and check if it exists. */
++	read_inode(oldfs, inode_nb, &inode);
++	if (inode.d2_mode == I_NOT_ALLOC)
++		fatal(E_INCONSISTENT, "Inode %d's bit set but not allocated",
++				(int) inode_nb);
++	
++	switch (inode.d2_mode & I_TYPE) {
++	case I_REGULAR:
++	case I_DIRECTORY:
++		/* We have a regular file or a directory, process the direct
++		 * blocks, single indirect block and double indirect block. */
++		DPRINTF("inode %d: %s\n", inode_nb, (inode.d2_mode & I_TYPE) ==
++				I_REGULAR ? "regular" : "directory");
++		
++		/* Handle first seven data zones. */
++		for (i=0; i<V2_NR_DZONES; i++) {
++			inode.d2_zone[i] = defrag_data_block(oldfs, newfs,
++					inode.d2_zone[i], next_free);
++		}
++		
++		/* Handle single indirect block. */
++		inode.d2_zone[i] = defrag_siblock(oldfs, newfs,
++				inode.d2_zone[i], next_free);
++		
++		/* Handle double indirect block. */
++		i++;
++		inode.d2_zone[i] = defrag_diblock(oldfs, newfs,
++				inode.d2_zone[i], next_free);
++		
++		break;
++		
++	case I_BLOCK_SPECIAL:
++	case I_CHAR_SPECIAL:
++	default:
++		/* For all other types of inode, just copy the inode. */
++		DPRINTF("inode %d: other\n", inode_nb);
++		break;
++	}
++	
++	setbit(newfs->inode_map, (bit_t) inode_nb);
++	write_inode(newfs, inode_nb, &inode);
++}
++
++
++PRIVATE void defrag_fs(fs_t *oldfs, fs_t *newfs)
++{
++	ino_t inode_nb = (ino_t) ROOT_INODE;
++	block_t next_free = (block_t) newfs->superblock.s_firstdatazone;
++	
++	for (; inode_nb <= oldfs->last_inode_nb; inode_nb++) {
++		defrag_inode(oldfs, newfs, inode_nb, &next_free);
++	}
++	
++	/* Write inode and zone bitmaps to disk. */
++	write_bitmap(newfs, 0, newfs->superblock.s_imap_blocks,
++			newfs->inode_map);
++	write_bitmap(newfs, newfs->superblock.s_imap_blocks,
++			newfs->superblock.s_zmap_blocks, newfs->zone_map);
++	
++	DPRINTF("wrote %d blocks\n", next_free -
++			newfs->superblock.s_firstdatazone);
++}
++
++
++
++
++/*============================================================================*
++ *                                  main                                      *
++ *============================================================================*/
++PUBLIC int main(int argc, char *argv[])
++{
++	fs_t oldfs, newfs;
++	
++	check_args(argc, argv);
++	open_input_fs(argv[1], &oldfs);
++	open_output_fs(argv[2], &newfs, oldfs.last_inode_nb, oldfs.zones_used);
++	
++	defrag_fs(&oldfs, &newfs);
++	
++	close_fs(&newfs);
++	close_fs(&oldfs);
++	
++	fprintf(stdout, "Defragmented file system written to %s\n",
++			newfs.filename);
++	return OK;
++}
+diff -Naur origsrc/extra/defrag.h src/extra/defrag.h
+--- origsrc/extra/defrag.h	1970-01-01 00:00:00.000000000 +0000
++++ src/extra/defrag.h	2009-08-26 21:56:29.000000000 +0000
+@@ -0,0 +1,136 @@
++/* Practical Operating Systems 2008/2009
++ * Assignment 2 -- defrag.h
++ *
++ * Header file for defrag.c.
++ *
++ * Richard van Heuven van Staereling  <richard@few.vu.nl>
++ * Marc Hage                          <mrhage@few.vu.nl>
++ *
++ */
++
++#ifndef DEFRAG_H
++#define DEFRAG_H
++
++#include <sys/types.h>                  /* block_t, ino_t, bitchunk_t, bit_t */
++#include <stdio.h>
++#include <unistd.h>
++#include <stdlib.h>
++#include <fcntl.h>                      /* open */
++#include <errno.h>                      /* errno */
++#include <string.h>                     /* strerror */
++#include <sys/stat.h>                   /* fstat, S_ISBLK */
++#include <stdarg.h>                     /* va_arg */
++#include <assert.h>                     /* assert */
++#define _POSIX_SOURCE 1                 /* for PATH_MAX in limits.h */
++#include <limits.h>                     /* PATH_MAX */
++#include <minix/config.h>
++#include <minix/const.h>                /* I_TYPE, NO_BLOCK, NO_ZONE, etc. */
++#include <minix/type.h>
++#include <minix/minlib.h>               /* get_mtab_entry */
++#include </usr/src/servers/fs/const.h>
++#include </usr/src/servers/fs/super.h>  /* struct super_block */
++#include </usr/src/servers/fs/type.h>   /* d2_inode */
++
++
++
++
++/*============================================================================*
++ *                               constants                                    *
++ *============================================================================*/
++#define BOOTBLOCK_OFFSET   ((off_t) 0)
++#define SUPERBLOCK_OFFSET  (BOOTBLOCK_OFFSET + BOOTBLOCK_SZ)
++#define BITMAPS_OFFSET     ((off_t) 2 * BLOCK_SZ)
++#define INODES_OFFSET      (BITMAPS_OFFSET + BITMAPS_BLOCKS * BLOCK_SZ)
++
++#define BOOTBLOCK_SZ       ((size_t) 1024)
++#define SUPERBLOCK_SZ      ((size_t) 1024)
++#define BLOCK_SZ           (fs->superblock.s_block_size)
++
++#define BITMAPS_BLOCKS     (IMAP_BLOCKS + ZMAP_BLOCKS)
++#define IMAP_BLOCKS        (fs->superblock.s_imap_blocks)
++#define ZMAP_BLOCKS        (fs->superblock.s_zmap_blocks)
++
++/* Supported block size.  Change this in Makefile to support different block
++ * sizes.  Must still be equal to whatever is in the superblock. */
++#ifndef BLOCKSIZE
++#define BLOCKSIZE          ((size_t) 1024)
++#endif
++
++
++
++
++/*============================================================================*
++ *                           macro functions                                  *
++ *============================================================================*/
++/* Macros for manipulating bitmasks.  (Changed to reflect names from fsck.c.) */
++#define BITSHIFT           4  /* = log2(#bits(int)) */
++#define BITMASK            ((1 << BITSHIFT) - 1)
++#define WORDOFBIT(b)       ((b) >> BITSHIFT)
++#define POWEROFBIT(b)      (1 << ((int) (b) & BITMASK))
++#define setbit(w, b)       (w[WORDOFBIT(b)] |= POWEROFBIT(b))
++#define clrbit(w, b)       (w[WORDOFBIT(b)] &= ~POWEROFBIT(b))
++#define bitset(w, b)       (w[WORDOFBIT(b)] & POWEROFBIT(b))
++
++/* Block number to byte address and vice versa. */
++#define btoa(b)            ((off_t) (b) * BLOCK_SZ)
++#define atob(a)            ((block_t) (a) / BLOCK_SZ)
++
++/* Inode number to byte address (excluding INODES_OFFSET).  Inode 0 is not
++ * present on disk, therefore the -1. */
++#define itoa(i)            (INODES_OFFSET + (off_t) (i - 1) * sizeof(d2_inode))
++
++#define PUBLIC
++#define PRIVATE            static
++
++#if DEBUG == 1
++#define DPRINTF            printf("[DEBUG] "); printf
++#else
++#define DPRINTF            (void)
++#endif
++
++
++
++
++/*============================================================================*
++ *                               error numbers                                *
++ *============================================================================*/
++#define OK                 0
++#define E_INVARGS          1  /* invalid arguments */
++#define E_NOTFOUND         2  /* file not found or file cannot be opened */
++#define E_NOTMINIX3        3  /* i/o fs is not a MINIX V3 file system */
++#define E_BLOCKSZ          4  /* i/o fs block size is not 1 KB */
++#define E_NOTEMPTY         5  /* target fs not empty */
++#define E_TOOSMALL         6  /* target fs too small */
++#define E_INCONSISTENT     7  /* input fs inconsistency, run fsck */
++#define E_GENERIC          8  /* other error, e.g. r/w */
++
++
++
++
++/*============================================================================*
++ *                                   types                                    *
++ *============================================================================*/
++typedef struct super_block superblock_t;
++
++/* The file system control block: a structure to hold necessary information
++ * about the fs while it is opened.  (The name fscb_t is technically more
++ * correct but this is easier for the eyes.) */
++typedef struct {
++	const char *filename;
++	int fd;
++	superblock_t superblock;
++	bitchunk_t *inode_map;
++	bitchunk_t *zone_map;
++	ino_t last_inode_nb;  /* only filled in oldfs to check size of newfs */
++	zone_t zones_used;    /* only filled in oldfs to check size of newfs */
++} fs_t;
++
++
++
++
++/*============================================================================*
++ *                                prototypes                                  *
++ *============================================================================*/
++_PROTOTYPE(int main, (int argc, char *argv[]));
++
++#endif /* DEFRAG_H */
