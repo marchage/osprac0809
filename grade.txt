@@ -1,0 +1,45 @@
+Date: Mon, 14 Sep 2009 13:52 +0200
+From: bs@few.vu.nl (Test account)
+To: mhe300@few.vu.nl, rhg600@few.vu.nl
+Subject: Personal feedback Practical Work Operating Systems 2008/2009
+
+M.R. Hage, R.D. van Heuven van Staereling,
+
+You receive this email because you successfully completed the
+Operating Systems Practical 2008/2009. As standard part of this
+course, we provide you with your grades for the individual exercises,
+and a number of feedback points.
+
+Exercise 1: 8.00
+Exercise 2: 8.25
+Exercise 3: 7.25
+
+- Do not redefine constants that are already available in Minix (e.g.
+  ULONG_MAX in limits.h) (ex.1)
+- A function call in the clock handler is costly (ex.1)
+- No need to use locks in the kernel-level part of the code (ex.1)
+- profile: unnecessary use of global variables (ex.1)
+- Nonstandard identation (ex.1)
+- Could have used fsck to verify the input filesystem consistency, no
+  need to reimplement it all yourself (ex.2)
+- Indirect/double indirect block handling could have been done with one
+  recursive function (ex.2)
+- Dynamically allocating memory in servers is bad and not needed (ex.3)
+- Returning an uninitialized variable in thread_wait() - verbose output
+  not checked? (ex.3)
+- Documentation: no description of own testing efforts (ex.3)
+
+DISCLAIMER: this feedback is provided purely as a courtesy to you, and
+is no ground for appeal. The provided points are of varying weight,
+and -due to the way our grading process works- are generally not
+representative for your grade. You can make an appointment for a more
+elaborate explanation, but please note that we are limited in what we
+can give away, as the same course will run next year. We generally
+only list negative points.
+
+Regards,
+
+Your course assistants
+Cristiano Giuffrida
+Raja Appuswamy
+David van Moolenbroek
