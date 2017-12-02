@@ -1,5 +1,5 @@
 # Operating Systems practical(osprac0809) answers
-- [ ] ~~apply patches and commit~~ (will throw an error as )
+- [ ] ~~apply patches and commit~~  directories `origsrc` and `src` do not exist in source. You need to run it first (and perhaps more).
 - [x] copy over source into this repository
 - [ ] make a git-submodule/fork/sort-of-package-manage the original minix source, perhaps?
 
