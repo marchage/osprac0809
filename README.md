@@ -4,9 +4,10 @@
 - [ ] ~~make a git-submodule/fork/sort-of-package-manage the original minix source, perhaps?~~ [initial commit/no interesting history](git@github.com:Stichting-MINIX-Research-Foundation/minix.git).
 - [x] include cd-rom image
 
-## Instalation insctruction
-* Install the cd-rom image on an old piece of hardware or a very generic vm. 
-* Mind the network-card driver.
+## Installation
+(detailed here)[www.minix3.org/doc/A-312.pdf]
+* Install [cd-rom image](http://download.minix3.org/iso/minix-3.1.0-book.iso.bz2) on old hardware or vm
+* Mind the network-card driver!
 * Start coding in vi
 
 ## Description
