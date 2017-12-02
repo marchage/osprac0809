@@ -1,4 +1,4 @@
-# Operating Systems practical (osprac0809)
+# My experiences doing the Operating Systems Practical
 - [x] ~~include cd-rom image~~ github 100mb limit
 - [x] copy source here
 - [ ] ~~apply patches~~  directories `origsrc` and `src` do not exist. Needs to be run first (and perhaps some other steps).
